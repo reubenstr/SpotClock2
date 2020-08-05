@@ -1,0 +1,17 @@
+{
+  "timestamp": 1596649170,
+  "metal": "XAU",
+  "currency": "USD",
+  "exchange": "FOREXCOM",
+  "symbol": "FOREXCOM:XAUUSD",
+  "prev_close_price": 2019.2,
+  "open_price": 2019.2,
+  "low_price": 2009.66,
+  "high_price": 2055.82,
+  "open_time": 1596574800,
+  "price": 2036.51,
+  "ch": 17.31,
+  "chp": 0.85,
+  "ask": 2036.97,
+  "bid": 2036.05
+}

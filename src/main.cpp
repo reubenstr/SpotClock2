@@ -28,16 +28,17 @@ Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 String ssid, password, brightness;
 
 const char *wifiFilePath = "/wifi.txt";
-
 const int chipSelect = D8;
+const int blankSegment = 10;
 
 float openAu, openAg, openPt;
 float spotAu, spotAg, spotPt;
 
-const int blankSegment = 10;
-
-
-
+struct MetalSpot
+{
+    float open;
+    float close;
+} metalSpot[3];
 
 enum IndicatorStatus
 {
@@ -50,12 +51,16 @@ enum IndicatorStatus
     fetchSuccess
 } indicatorStatus;
 
+int selectedMetal;
+
+/*
 enum Metals
 {
     au,
     ag,
     pt
 } selectedMetal;
+*/
 
 // Pack color data into 32 bit unsigned int (copied from Neopixel library).
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
@@ -271,12 +276,12 @@ void SetIndicators(uint32_t color)
     }
 
     // Set metal indicators;
-    strip3.setPixelColor(7, selectedMetal == au ? color : 0);
-    strip3.setPixelColor(8, selectedMetal == au ? color : 0);
-    strip3.setPixelColor(9, selectedMetal == ag ? color : 0);
-    strip3.setPixelColor(10, selectedMetal == ag ? color : 0);
-    strip3.setPixelColor(11, selectedMetal == pt ? color : 0);
-    strip3.setPixelColor(12, selectedMetal == pt ? color : 0);
+    strip3.setPixelColor(7, selectedMetal == 0 ? color : 0);
+    strip3.setPixelColor(8, selectedMetal == 0 ? color : 0);
+    strip3.setPixelColor(9, selectedMetal == 1 ? color : 0);
+    strip3.setPixelColor(10, selectedMetal == 1 ? color : 0);
+    strip3.setPixelColor(11, selectedMetal == 2 ? color : 0);
+    strip3.setPixelColor(12, selectedMetal == 2 ? color : 0);
 }
 
 void UpdateStrips()
@@ -385,7 +390,6 @@ bool FetchDataFromInternet(float *price, String expression, String instrument)
         return false;
     }
 
-
     DynamicJsonDocument doc(2048);
     DeserializationError error = deserializeJson(doc, payload);
 
@@ -397,7 +401,6 @@ bool FetchDataFromInternet(float *price, String expression, String instrument)
     }
 
     *price = doc["results"][instrument]["data"][0][1];
-    
 
     return true;
 }
@@ -406,43 +409,46 @@ bool GetUpdatedSpot()
 {
     const String metals[] = {"XAU_USD", "XAG_USD", "XPT_USD"};
 
-    static int metalSelectionIndex = 0;
-    if (++metalSelectionIndex > 2)
+    static int metalIndex = 0;
+    if (++metalIndex > 2)
     {
-        metalSelectionIndex = 0;
+        metalIndex = 0;
     }
 
-   float price;
+    float price;
 
-    if (!FetchDataFromInternet(&price, "close", metals[metalSelectionIndex]))
+    if (!FetchDataFromInternet(&price, "open", metals[metalIndex]))
     {
         return false;
-    }  
+    }
 
-    if (metalSelectionIndex == 0)
+    metalSpot[metalIndex].open = price;
+
+    if (!FetchDataFromInternet(&price, "close", metals[metalIndex]))
     {
-        spotAu = price;
+        return false;
     }
-    else if (metalSelectionIndex == 1)
-    {
-        spotAg = price;
-    }
-    else if (metalSelectionIndex == 2)
-    {
-        spotPt = price;
-    }
+
+    metalSpot[metalIndex].close = price;
 
     return true;
 }
 
 void IncrementMetalSelection()
 {
+    /*
     if (selectedMetal == au)
         selectedMetal = ag;
     else if (selectedMetal == ag)
         selectedMetal = pt;
     else if (selectedMetal == pt)
         selectedMetal = au;
+*/
+
+    if (++selectedMetal > 2)
+    {
+        selectedMetal = 0;
+    }
 }
 
 void setup()
@@ -548,9 +554,11 @@ void loop()
 
     int numbers[5];
     int dot;
-    float spot = selectedMetal == au ? spotAu : selectedMetal == ag ? spotAg : selectedMetal == pt ? spotPt : 0;
+    //float spot = selectedMetal == au ? spotAu : selectedMetal == ag ? spotAg : selectedMetal == pt ? spotPt : 0;
 
-    GenerateNumbers(spot, numbers, &dot);
+    uint32_t color = metalSpot[selectedMetal].close > metalSpot[selectedMetal].open ? Color(0, 255, 0) : Color(255, 0, 0);
+
+    GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
     SetSegments(numbers, 0x0000ff);
     SetDots(dot, 0x0000ff);
     SetIndicators(0x0000ff);

@@ -6,6 +6,9 @@
 #include <SD.h>
 
 #include "ESP8266WiFi.h"
+
+#include <esp8266httpclient.h>
+
 #include "ArduinoJson.h"
 #include <Adafruit_NeoPixel.h> // https://github.com/adafruit/Adafruit_NeoPixel
 
@@ -163,19 +166,8 @@ bool GetWifiCredentialsFromSDCard()
     return false;
 }
 
-float fRound(float var)
-{
-    // 37.66666 * 100 =3766.66
-    // 3766.66 + .5 =3767.16    for rounding off value
-    // then type cast to int so value is 3767
-    // then divided by 100 so the value converted into 37.67
-    float value = (int)(var * 100 + .5);
-    return (float)value / 100;
-}
-
 void GenerateNumbers(float value, int *numbers, int *dot)
 {
-
     // Split the value into an integer part and a fractional part.
     int iPart = (int)value;
     int fPart = (int)((value - iPart) * 100 + .5);
@@ -188,57 +180,6 @@ void GenerateNumbers(float value, int *numbers, int *dot)
 
     int fOnes = fPart % 10;
     int fTens = (fPart / 10) % 10;
-
-    /*
-    int index = 0;
-    char buf[20];
-    sprintf(buf, "%.2f", value);
-
-    for (int i = 0; i < sizeof(buf); i++)
-    {
-        if (buf[i] == '.')
-            index = i;
-    }
-
-    Serial.println(value);
-    Serial.println(buf);
-    Serial.println(index);
-
-    if (index >= 1)
-        ones = buf[index - 1] - 48;
-    if (index >= 2)
-        tens = buf[index - 2] - 48;
-    if (index >= 3)
-        hundreds = buf[index - 3] - 48;
-    if (index >= 4)
-        thousands = buf[index - 4] - 48;
-    if (index >= 5)
-        tenthousands = buf[index - 5] - 48;
-
-    fTens = buf[index + 1] - 48;
-    fOnes = buf[index + 2] - 48;
-    */
-
-    /*
-    char str[] = "1234.56";
-char * pch;
-
-pch = strtok(str, ".");
-
- while (pch != NULL)
-  {
-    Serial.printf ("%s\n", pch);
-    pch = strtok(NULL, ".");
-  }
-*/
-
-    Serial.println(value);
-    Serial.println(fRound(value));
-    Serial.println(fPart);
-    Serial.println(fOnes);
-    Serial.println(fTens);
-
-    Serial.println("---");
 
     if (iPart < 100)
     {
@@ -375,62 +316,65 @@ void sdFailure()
 bool FetchDataFromInternet()
 {
 
-    /*
-    const char *host = "www.goldapi.io";  
+    static int metalSelectionIndex = 0;
+    if (++metalSelectionIndex > 2)
+    {
+        metalSelectionIndex = 0;
+    }
+
+    String metalSelection = metalSelectionIndex == 0 ? "XAU_USD" : metalSelectionIndex == 1 ? "XAG_USD" : metalSelectionIndex == 2 ? "XPT_USD" : "";
+
+    String host = "http://api.fxhistoricaldata.com/indicators?timeframe=5minute&item_count=1&expression=close&instruments=" + metalSelection;
 
     Serial.print("Connecting to ");
     Serial.println(host);
 
-    WiFiClient client;
-    if (!client.connect(host, 80))
+    HTTPClient http;
+    http.begin(host);
+    int httpCode = http.GET();
+
+    String payload;
+
+    if (httpCode > 0)
     {
-        Serial.println("Connection to host failed.");
+        Serial.print("HTTP code: ");
+        Serial.println(httpCode);
+        Serial.println("[RESPONSE]");
+        payload = http.getString();
+        Serial.println(payload);
+        http.end();
+    }
+    else
+    {
+        Serial.print("Connection failed, HTTP client code: ");
+        Serial.println(httpCode);
         return false;
     }
 
-    client.print(String("GET /") + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n" +
-                 "Connection: close\r\n" +
-                 "\r\n");
-    Serial.println("[Response:]");
-
-    while (client.connected() || client.available())
-    {
-        if (client.available())
-        {
-            String line = client.readStringUntil('\n');
-            Serial.println(line);
-        }
-    }
-
-    Serial.println("\n[Disconnected]");
-
-    client.stop();
-    */
-
-    // StaticJsonDocument<1024> doc;
-
     DynamicJsonDocument doc(2048);
-    //deserializeJson(doc, http.getStream());
-
-    char json[] =
-        "{\"price\":\"123.89\",\"time\":1351824120,\"data\":[48.756080,2.302038]}";
-
-    DeserializationError error = deserializeJson(doc, json);
+    DeserializationError error = deserializeJson(doc, payload);
 
     if (error)
     {
-        Serial.print(F("deserializeJson() failed: "));
+        Serial.print(F("DeserializeJson() failed: "));
         Serial.println(error.c_str());
         return false;
     }
 
-    float price = doc["price"];
+    float price = doc["results"][metalSelection]["data"][0][1];
 
-    Serial.print("Price: ");
-    Serial.println(price);
-
-    spotAu = price;
+    if (metalSelectionIndex == 0)
+    {
+        spotAu = price;
+    }
+    else if (metalSelectionIndex == 1)
+    {
+        spotAg = price;
+    }
+    else if (metalSelectionIndex == 2)
+    {
+        spotPt = price;
+    }
 
     return true;
 }
@@ -460,7 +404,7 @@ void setup()
     sdCardMounted = true;
 
     WiFi.begin(ssid, password);
-    /*
+    /*   */
 
     Serial.print("Connecting to WiFi...");
 
@@ -472,7 +416,6 @@ void setup()
         Serial.print(".");
         delay(250);
     }
-    */
 
     Serial.println();
     Serial.println("Connected.");
@@ -498,11 +441,13 @@ void loop()
 
     UpdateStatusIndicator();
 
-    static msTimer timerFetch(3000);
+    static msTimer timerFetch(0);
     if (timerFetch.elapsed())
     {
         UpdateStatusIndicator(true);
         FetchDataFromInternet();
+
+        timerFetch.setDelay(300000);
     }
 
     int numbers[5];

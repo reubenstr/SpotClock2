@@ -1,20 +1,18 @@
 #include <Arduino.h>
-#include "msTimer.h"
-#include "flasher.h"
-
+#include "msTimer.h" // Local libary.
+#include "flasher.h" // Local libary.
 #include <SPI.h>
 #include <SD.h>
-
 #include "ESP8266WiFi.h"
-
 #include <esp8266httpclient.h>
-
 #include "ArduinoJson.h"
 #include <Adafruit_NeoPixel.h> // https://github.com/adafruit/Adafruit_NeoPixel
+#include <JC_Button.h>         // https://github.com/JChristensen/JC_Button
 
-#define PIN_STRIP_1 5
-#define PIN_STRIP_2 4
-#define PIN_STRIP_3 0
+#define PIN_STRIP_1 5       // GPIO PIN NUMBER
+#define PIN_STRIP_2 4       // GPIO PIN NUMBER
+#define PIN_STRIP_3 0       // GPIO PIN NUMBER
+#define PIN_BUTTON_SELECT 2 // GPIO PIN NUMBER
 
 const int stripMaxBrightness = 50;
 const int stripStatusIndicatorIndex = 4;
@@ -23,6 +21,8 @@ const int stripStatusIndicatorIndex = 4;
 Adafruit_NeoPixel strip1 = Adafruit_NeoPixel(42, PIN_STRIP_1, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip2 = Adafruit_NeoPixel(47, PIN_STRIP_2, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip3 = Adafruit_NeoPixel(34, PIN_STRIP_3, NEO_RGB + NEO_KHZ800);
+
+Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 
 String ssid;
 String password;
@@ -41,8 +41,25 @@ enum WifiStatus
     connecting
 } wifiStatus;
 
+enum FetchingStatus
+{
+    fetching,
+    failed,
+    success
+};
+
 bool sdCardMounted;
-bool isFetchingData;
+
+enum IndicatorStatus
+{
+    sdCardFailure,
+    wifiConnecting,
+    wifiConnected,
+    wifiDisconnected,
+    fetchingData,
+    fetchFailed,
+    fetchSuccess
+} indicatorStatus;
 
 enum Metals
 {
@@ -270,6 +287,80 @@ void UpdateStrips()
     strip3.show();
 }
 
+void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
+{
+
+    /*
+    sdCardFailure,
+    wifiConnecting,
+    wifiConnected,
+    wifiDisconnected,
+    fetchingData,
+    fetchFailed,
+    fetchSuccess
+    */
+
+    if (indicatorStatus == sdCardFailure)
+    {
+        static msTimer timer(250);
+        static bool toggle;
+        if (timer.elapsed())
+        {
+            toggle = !toggle;
+        }
+        uint32_t color = toggle ? Color(127, 127, 0) : Color(0, 0, 0);
+        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+    }
+    else if (indicatorStatus == wifiConnecting)
+    {
+        static msTimer timer(250);
+        static bool toggle;
+        if (timer.elapsed())
+        {
+            toggle = !toggle;
+        }
+        uint32_t color = toggle ? Color(255, 0, 0) : Color(0, 0, 0);
+        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+    }
+    else if (indicatorStatus == wifiConnected)
+    {
+        strip2.setPixelColor(stripStatusIndicatorIndex, Color(0, 255, 0));
+    }
+    else if (indicatorStatus == wifiDisconnected)
+    {
+        strip2.setPixelColor(stripStatusIndicatorIndex, Color(255, 0, 0));
+    }
+    else if (indicatorStatus == fetchingData)
+    {
+        strip2.setPixelColor(stripStatusIndicatorIndex, Color(0, 0, 255));
+    }
+    else if (indicatorStatus == fetchFailed)
+    {
+        static msTimer timer(250);
+        static bool toggle;
+        if (timer.elapsed())
+        {
+            toggle = !toggle;
+        }
+        uint32_t color = toggle ? Color(255, 0, 0) : Color(0, 255, 0);
+        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+    }
+    else if (indicatorStatus == fetchSuccess)
+    {
+        static msTimer timer(250);
+        static bool toggle;
+        if (timer.elapsed())
+        {
+            toggle = !toggle;
+        }
+        uint32_t color = toggle ? Color(255, 0, 0) : Color(0, 0, 255);
+        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+    }
+
+    strip2.show();
+}
+
+/*
 void UpdateStatusIndicator(bool isFetchingData = false)
 {
     if (isFetchingData)
@@ -301,15 +392,14 @@ void UpdateStatusIndicator(bool isFetchingData = false)
     }
     strip2.show();
 }
+*/
 
 void sdFailure()
 {
-    sdCardMounted = false;
-    UpdateStatusIndicator();
-
+    // System halted.
     while (1)
     {
-        // Halt system.
+        UpdateConnectionIndicator(sdCardFailure);
     }
 }
 
@@ -322,9 +412,11 @@ bool FetchDataFromInternet()
         metalSelectionIndex = 0;
     }
 
-    String metalSelection = metalSelectionIndex == 0 ? "XAU_USD" : metalSelectionIndex == 1 ? "XAG_USD" : metalSelectionIndex == 2 ? "XPT_USD" : "";
+    const String metals[] = {"XAU_USD", "XAG_USD", "XPT_USD"};
 
-    String host = "http://api.fxhistoricaldata.com/indicators?timeframe=5minute&item_count=1&expression=close&instruments=" + metalSelection;
+    //String metalSelection = metalSelectionIndex == 0 ? "XAU_USD" : metalSelectionIndex == 1 ? "XAG_USD" : metalSelectionIndex == 2 ? "XPT_USD" : "";
+
+    String host = "http://api.fxhistoricaldata.com/indicators?timeframe=5minute&item_count=1&expression=close&instruments=" + metals[metalSelectionIndex];
 
     Serial.print("Connecting to ");
     Serial.println(host);
@@ -361,7 +453,7 @@ bool FetchDataFromInternet()
         return false;
     }
 
-    float price = doc["results"][metalSelection]["data"][0][1];
+    float price = doc["results"][metals[metalSelectionIndex]]["data"][0][1];
 
     if (metalSelectionIndex == 0)
     {
@@ -392,6 +484,8 @@ void setup()
     strip2.begin();
     strip3.begin();
 
+    buttonSelect.begin();
+
     if (!InitSDCard())
     {
         sdFailure();
@@ -411,8 +505,7 @@ void setup()
     msTimer timer(250);
     while (WiFi.status() != WL_CONNECTED)
     {
-        wifiStatus = connecting;
-        UpdateStatusIndicator();
+        UpdateConnectionIndicator(wifiConnecting);
         Serial.print(".");
         delay(250);
     }
@@ -426,35 +519,54 @@ void setup()
 void loop()
 {
 
-    // static int numbers[5];
-    static msTimer timer(100);
-    // static int n = 0;
+    static wl_status_t previousWifiStatus;
 
-    if (WiFi.status() == WL_CONNECTED)
+    if (previousWifiStatus != WiFi.status())
     {
-        wifiStatus = connected;
-    }
-    else if (WiFi.status() != WL_CONNECTED)
-    {
-        wifiStatus = disconnected;
+        previousWifiStatus = WiFi.status();
+        if (WiFi.status() == WL_CONNECTED)
+        {
+             indicatorStatus = wifiConnected;
+        }
+        else if (WiFi.status() != WL_CONNECTED)
+        {
+           
+            indicatorStatus = wifiDisconnected;
+        }
     }
 
-    UpdateStatusIndicator();
+  
+
+    UpdateConnectionIndicator(indicatorStatus);
 
     static msTimer timerFetch(0);
     if (timerFetch.elapsed())
     {
-        UpdateStatusIndicator(true);
-        FetchDataFromInternet();
-
         timerFetch.setDelay(300000);
+
+        indicatorStatus = fetchingData;
+        UpdateConnectionIndicator(indicatorStatus);
+
+        bool success = FetchDataFromInternet();
+        indicatorStatus = success ? fetchSuccess : fetchFailed;
+    }
+
+    buttonSelect.read();
+    if (buttonSelect.wasPressed())
+    {
+        if (selectedMetal == au)
+            selectedMetal = ag;
+        else if (selectedMetal == ag)
+            selectedMetal = pt;
+        else if (selectedMetal == pt)
+            selectedMetal = au;
     }
 
     int numbers[5];
     int dot;
+    float spot = selectedMetal == au ? spotAu : selectedMetal == ag ? spotAg : selectedMetal == pt ? spotPt : 0;
 
-    GenerateNumbers(spotAu, numbers, &dot);
-
+    GenerateNumbers(spot, numbers, &dot);
     SetSegments(numbers, 0x0000ff);
     SetDots(dot, 0x0000ff);
     SetIndicators(0x0000ff);

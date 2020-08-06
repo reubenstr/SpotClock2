@@ -249,7 +249,7 @@ void GenerateNumbers(float value, int *numbers, int *dot)
 
 void SetDots(int dot, uint32_t color)
 {
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
     {
         strip2.setPixelColor(i, 0);
     }
@@ -408,6 +408,7 @@ bool FetchDataFromInternet(float *price, String expression, String instrument)
     {
         Serial.print("Connection failed, HTTP client code: ");
         Serial.println(httpCode);
+        http.end();
         return false;
     }
 
@@ -437,6 +438,33 @@ bool GetUpdatedSpot()
     }
 
     float price;
+
+    String host = "http://worldclockapi.com/api/json/est/now";
+
+    Serial.print("Connecting to ");
+    Serial.println(host);
+    /*
+    HTTPClient http;
+    http.begin(host);
+    int httpCode = http.GET();
+
+    if (httpCode > 0)
+    {
+        Serial.print("HTTP code: ");
+        Serial.println(httpCode);
+        Serial.println("[RESPONSE]");
+        String p = http.getString();
+        Serial.println(p);
+        http.end();
+    }
+    else
+    {
+        Serial.print("Connection failed, HTTP client code: ");
+        Serial.println(httpCode);
+        http.end();
+        return false;
+    }
+    */
 
     if (!FetchDataFromInternet(&price, "open", metals[metalIndex]))
     {
@@ -556,7 +584,7 @@ void loop()
     static msTimer timerFetch(0);
     if (timerFetch.elapsed())
     {
-        timerFetch.setDelay(300000);
+        timerFetch.setDelay(20000);
 
         indicatorStatus = fetchingData;
         UpdateConnectionIndicator(indicatorStatus);

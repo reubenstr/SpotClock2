@@ -18,21 +18,19 @@ const int stripMaxBrightness = 50;
 const int stripStatusIndicatorIndex = 4;
 // Due to hardware limitations of the ESP8266 long WS2812b strips are not possible.
 // Therefore segments, indicators, and dots are combined in a awkward combination to prevent flickering.
-Adafruit_NeoPixel strip1 = Adafruit_NeoPixel(42, PIN_STRIP_1, NEO_RGB + NEO_KHZ800);
-Adafruit_NeoPixel strip2 = Adafruit_NeoPixel(47, PIN_STRIP_2, NEO_RGB + NEO_KHZ800);
-Adafruit_NeoPixel strip3 = Adafruit_NeoPixel(34, PIN_STRIP_3, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel strip1 = Adafruit_NeoPixel(42, PIN_STRIP_1, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip2 = Adafruit_NeoPixel(47, PIN_STRIP_2, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip3 = Adafruit_NeoPixel(34, PIN_STRIP_3, NEO_GRB + NEO_KHZ800);
 
 Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 
 // SD card parameters.
 String ssid, password, brightness;
+int cycleDelay;
 
 const char *wifiFilePath = "/wifi.txt";
 const int chipSelect = D8;
 const int blankSegment = 10;
-
-float openAu, openAg, openPt;
-float spotAu, spotAg, spotPt;
 
 struct MetalSpot
 {
@@ -51,16 +49,13 @@ enum IndicatorStatus
     fetchSuccess
 } indicatorStatus;
 
-int selectedMetal;
+int selectedMetal; // 0 = Au, 1 = Ag, 2 = Pt
 
-/*
-enum Metals
-{
-    au,
-    ag,
-    pt
-} selectedMetal;
-*/
+const uint32_t OFF = 0x0000000;
+const uint32_t RED = 0x00FF0000;
+const uint32_t GREEN = 0x0000FF00;
+const uint32_t BLUE = 0x000000FF;
+const uint32_t YELLOW = 0x00F0F000;
 
 // Pack color data into 32 bit unsigned int (copied from Neopixel library).
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
@@ -107,6 +102,18 @@ uint32_t Wheel(byte WheelPos)
     }
     WheelPos -= 170;
     return Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+
+// Dot (5mm WS2812b LED) red and green colors are swapped.
+uint32_t SwapRG(uint32_t color)
+{
+    int r, g, b;
+
+    r = (color & 0x00FF0000) >> 16;
+    g = (color & 0x0000FF00) >> 8;
+    b = color & 0x000000FF;
+
+    return Color(g, r, b);
 }
 
 // Convert decimal value to segments (hardware does not follow 7-segment display convention).
@@ -171,6 +178,11 @@ void GetParametersFromSDCard()
     {
         brightness = file.readStringUntil('"');
     }
+
+    if (file.find("Cycle delay: \""))
+    {
+        cycleDelay = file.readStringUntil('"').toInt();
+    }
 }
 
 void GenerateNumbers(float value, int *numbers, int *dot)
@@ -188,7 +200,16 @@ void GenerateNumbers(float value, int *numbers, int *dot)
     int fOnes = fPart % 10;
     int fTens = (fPart / 10) % 10;
 
-    if (iPart < 100)
+    if (iPart == 0)
+    {
+        numbers[4] = blankSegment;
+        numbers[3] = blankSegment;
+        numbers[2] = blankSegment;
+        numbers[1] = blankSegment;
+        numbers[0] = blankSegment;
+        *dot = blankSegment;
+    }
+    else if (iPart < 100)
     {
         numbers[4] = blankSegment;
         numbers[3] = tens;
@@ -235,7 +256,7 @@ void SetDots(int dot, uint32_t color)
 
     if (dot != blankSegment)
     {
-        strip2.setPixelColor(dot, color);
+        strip2.setPixelColor(dot, SwapRG(color));
     }
 }
 
@@ -272,7 +293,7 @@ void SetIndicators(uint32_t color)
     for (int i = 0; i < 7; i++)
     {
         //strip3.setPixelColor(i, Wheel((255 / 7) * i) + wheelPos);
-        strip3.setPixelColor(i, Wheel(wheelPos + i * 6));
+        strip3.setPixelColor(i, Wheel(wheelPos + i * 10));
     }
 
     // Set metal indicators;
@@ -282,13 +303,6 @@ void SetIndicators(uint32_t color)
     strip3.setPixelColor(10, selectedMetal == 1 ? color : 0);
     strip3.setPixelColor(11, selectedMetal == 2 ? color : 0);
     strip3.setPixelColor(12, selectedMetal == 2 ? color : 0);
-}
-
-void UpdateStrips()
-{
-    strip1.show();
-    strip2.show();
-    strip3.show();
 }
 
 void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
@@ -301,8 +315,8 @@ void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
         {
             toggle = !toggle;
         }
-        uint32_t color = toggle ? Color(127, 127, 0) : Color(0, 0, 0);
-        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+        uint32_t color = toggle ? YELLOW : OFF;
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(color));
     }
     else if (indicatorStatus == wifiConnecting)
     {
@@ -312,20 +326,20 @@ void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
         {
             toggle = !toggle;
         }
-        uint32_t color = toggle ? Color(255, 0, 0) : Color(0, 0, 0);
-        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+        uint32_t color = toggle ? RED : OFF;
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(color));
     }
     else if (indicatorStatus == wifiConnected)
     {
-        strip2.setPixelColor(stripStatusIndicatorIndex, Color(0, 255, 0));
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(GREEN));
     }
     else if (indicatorStatus == wifiDisconnected)
     {
-        strip2.setPixelColor(stripStatusIndicatorIndex, Color(255, 0, 0));
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(RED));
     }
     else if (indicatorStatus == fetchingData)
     {
-        strip2.setPixelColor(stripStatusIndicatorIndex, Color(0, 0, 255));
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(BLUE));
     }
     else if (indicatorStatus == fetchFailed)
     {
@@ -335,8 +349,8 @@ void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
         {
             toggle = !toggle;
         }
-        uint32_t color = toggle ? Color(255, 0, 0) : Color(0, 255, 0);
-        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+        uint32_t color = toggle ? RED : GREEN;
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(color));
     }
     else if (indicatorStatus == fetchSuccess)
     {
@@ -346,11 +360,18 @@ void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
         {
             toggle = !toggle;
         }
-        uint32_t color = toggle ? Color(0, 255, 0) : Color(0, 0, 255);
-        strip2.setPixelColor(stripStatusIndicatorIndex, color);
+        uint32_t color = toggle ? GREEN : BLUE;
+        strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(color));
     }
 
     strip2.show();
+}
+
+void UpdateStrips()
+{
+    strip1.show();
+    strip2.show();
+    strip3.show();
 }
 
 void sdFailure()
@@ -431,20 +452,15 @@ bool GetUpdatedSpot()
 
     metalSpot[metalIndex].close = price;
 
+    Serial.print(metals[metalIndex] + " | ");
+    Serial.print(("Open : " + (String)metalSpot[metalIndex].open) + ", ");
+    Serial.println(("Close : " + (String)metalSpot[metalIndex].close));
+
     return true;
 }
 
 void IncrementMetalSelection()
 {
-    /*
-    if (selectedMetal == au)
-        selectedMetal = ag;
-    else if (selectedMetal == ag)
-        selectedMetal = pt;
-    else if (selectedMetal == pt)
-        selectedMetal = au;
-*/
-
     if (++selectedMetal > 2)
     {
         selectedMetal = 0;
@@ -489,6 +505,9 @@ void setup()
     Serial.print("Brightness: ");
     Serial.println(b);
 
+    Serial.print("CycleDelay: ");
+    Serial.println(cycleDelay);
+
     WiFi.begin(ssid, password);
 
     Serial.print("Connecting to WiFi...");
@@ -510,7 +529,13 @@ void setup()
 void loop()
 {
 
-    ESP.wdtFeed();
+    static msTimer timerYield(25);
+    if (timerYield.elapsed())
+    {
+        // ESP8266 watchdog timer reset work around.
+        ESP.wdtFeed();
+        yield();
+    }
 
     UpdateConnectionIndicator(indicatorStatus);
 
@@ -540,7 +565,7 @@ void loop()
         indicatorStatus = success ? fetchSuccess : fetchFailed;
     }
 
-    static msTimer timerMetalSelection(3000);
+    static msTimer timerMetalSelection(cycleDelay);
     if (timerMetalSelection.elapsed())
     {
         IncrementMetalSelection();
@@ -549,18 +574,17 @@ void loop()
     buttonSelect.read();
     if (buttonSelect.wasPressed())
     {
+        timerMetalSelection.resetDelay();
         IncrementMetalSelection();
     }
 
     int numbers[5];
     int dot;
-    //float spot = selectedMetal == au ? spotAu : selectedMetal == ag ? spotAg : selectedMetal == pt ? spotPt : 0;
-
-    uint32_t color = metalSpot[selectedMetal].close > metalSpot[selectedMetal].open ? Color(0, 255, 0) : Color(255, 0, 0);
+    uint32_t color = (metalSpot[selectedMetal].close > metalSpot[selectedMetal].open) ? GREEN : RED;
 
     GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
-    SetSegments(numbers, 0x0000ff);
-    SetDots(dot, 0x0000ff);
-    SetIndicators(0x0000ff);
+    SetSegments(numbers, color);
+    SetDots(dot, color);
+    SetIndicators(BLUE);
     UpdateStrips();
 }

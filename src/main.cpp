@@ -163,12 +163,22 @@ bool GetWifiCredentialsFromSDCard()
     return false;
 }
 
+float fRound(float var)
+{
+    // 37.66666 * 100 =3766.66
+    // 3766.66 + .5 =3767.16    for rounding off value
+    // then type cast to int so value is 3767
+    // then divided by 100 so the value converted into 37.67
+    float value = (int)(var * 100 + .5);
+    return (float)value / 100;
+}
+
 void GenerateNumbers(float value, int *numbers, int *dot)
 {
 
+    // Split the value into an integer part and a fractional part.
     int iPart = (int)value;
-    int fPart = (int)((value - (int)value) * 100);
-    *dot = 3;
+    int fPart = (int)((value - iPart) * 100 + .5);
 
     int ones = iPart % 10;
     int tens = (iPart / 10) % 10;
@@ -179,18 +189,56 @@ void GenerateNumbers(float value, int *numbers, int *dot)
     int fOnes = fPart % 10;
     int fTens = (fPart / 10) % 10;
 
-    for (int i = 0; i < 5; i++)
+    /*
+    int index = 0;
+    char buf[20];
+    sprintf(buf, "%.2f", value);
+
+    for (int i = 0; i < sizeof(buf); i++)
     {
-        numbers[i] = blankSegment;
+        if (buf[i] == '.')
+            index = i;
     }
 
+    Serial.println(value);
+    Serial.println(buf);
+    Serial.println(index);
+
+    if (index >= 1)
+        ones = buf[index - 1] - 48;
+    if (index >= 2)
+        tens = buf[index - 2] - 48;
+    if (index >= 3)
+        hundreds = buf[index - 3] - 48;
+    if (index >= 4)
+        thousands = buf[index - 4] - 48;
+    if (index >= 5)
+        tenthousands = buf[index - 5] - 48;
+
+    fTens = buf[index + 1] - 48;
+    fOnes = buf[index + 2] - 48;
+    */
+
     /*
-    numbers[0] = ones;
-        numbers[1] = tens;
-        numbers[2] = hundreds;
-        numbers[3] = thousands;
-        numbers[4] = tenthousands;
-        */
+    char str[] = "1234.56";
+char * pch;
+
+pch = strtok(str, ".");
+
+ while (pch != NULL)
+  {
+    Serial.printf ("%s\n", pch);
+    pch = strtok(NULL, ".");
+  }
+*/
+
+    Serial.println(value);
+    Serial.println(fRound(value));
+    Serial.println(fPart);
+    Serial.println(fOnes);
+    Serial.println(fTens);
+
+    Serial.println("---");
 
     if (iPart < 100)
     {
@@ -212,16 +260,16 @@ void GenerateNumbers(float value, int *numbers, int *dot)
     }
     else if (iPart < 10000)
     {
-            numbers[4] = thousands;
+        numbers[4] = thousands;
         numbers[3] = hundreds;
         numbers[2] = tens;
         numbers[1] = ones;
-        numbers[0] = fOnes;
+        numbers[0] = fTens;
         *dot = 3;
     }
     else if (iPart < 100000)
-    {   
-         numbers[4] = tenthousands;
+    {
+        numbers[4] = tenthousands;
         numbers[3] = thousands;
         numbers[2] = hundreds;
         numbers[1] = tens;
@@ -266,7 +314,6 @@ void SetSegments(int numbers[5], uint32_t color)
 
 void SetIndicators(uint32_t color)
 {
-
     strip3.setPixelColor(7, selectedMetal == au ? color : 0);
     strip3.setPixelColor(8, selectedMetal == au ? color : 0);
     strip3.setPixelColor(9, selectedMetal == ag ? color : 0);
@@ -367,7 +414,7 @@ bool FetchDataFromInternet()
     //deserializeJson(doc, http.getStream());
 
     char json[] =
-        "{\"price\":\"1234.56\",\"time\":1351824120,\"data\":[48.756080,2.302038]}";
+        "{\"price\":\"123.89\",\"time\":1351824120,\"data\":[48.756080,2.302038]}";
 
     DeserializationError error = deserializeJson(doc, json);
 
@@ -413,6 +460,8 @@ void setup()
     sdCardMounted = true;
 
     WiFi.begin(ssid, password);
+    /*
+
     Serial.print("Connecting to WiFi...");
 
     msTimer timer(250);
@@ -423,6 +472,7 @@ void setup()
         Serial.print(".");
         delay(250);
     }
+    */
 
     Serial.println();
     Serial.println("Connected.");

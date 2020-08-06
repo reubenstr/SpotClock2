@@ -1,3 +1,25 @@
+/*
+*   Spot Clock 2
+*
+*   Fetches then displays current gold, silver, and platium prices via 
+*   WS2812b 7-segment displays.
+*
+*   Reuben Strangelove
+*   Summer 2020
+*
+*   MCU: ESP8266 
+*   MCU Hardware: hw-628 NODEMCU V3
+*
+*   
+*   
+*   Notes:
+*   Neopixel strips have spread across multiple pins in order to reduce strip length.
+*   Long strips caused flickering.
+*   Neopixels are only updated when necessary as constant updates causes the
+*   watchdog timer to trigger.
+*
+*/
+
 #include <Arduino.h>
 #include "msTimer.h" // Local libary.
 #include "flasher.h" // Local libary.
@@ -25,8 +47,8 @@ Adafruit_NeoPixel strip3 = Adafruit_NeoPixel(34, PIN_STRIP_3, NEO_GRB + NEO_KHZ8
 Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 
 // SD card parameters.
-String ssid, password, brightness;
-int cycleDelay;
+String ssid, password;
+int brightness, cycleDelay;
 
 const char *wifiFilePath = "/wifi.txt";
 const int chipSelect = D8;
@@ -176,7 +198,7 @@ void GetParametersFromSDCard()
 
     if (file.find("Brightness: \""))
     {
-        brightness = file.readStringUntil('"');
+        brightness = file.readStringUntil('"').toInt();
     }
 
     if (file.find("Cycle delay: \""))
@@ -305,8 +327,12 @@ void SetIndicators(uint32_t color)
     strip3.setPixelColor(12, selectedMetal == 2 ? color : 0);
 }
 
-void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
+void UpdateConnectionIndicator()
 {
+    static uint32_t oldIndicatorValue;
+
+    oldIndicatorValue = strip2.getPixelColor(stripStatusIndicatorIndex);
+
     if (indicatorStatus == sdCardFailure)
     {
         static msTimer timer(250);
@@ -364,7 +390,10 @@ void UpdateConnectionIndicator(IndicatorStatus indicatorStatus)
         strip2.setPixelColor(stripStatusIndicatorIndex, SwapRG(color));
     }
 
-    strip2.show();
+    if (oldIndicatorValue != strip2.getPixelColor(stripStatusIndicatorIndex))
+    {
+        strip2.show();
+    }
 }
 
 void UpdateStrips()
@@ -379,7 +408,8 @@ void sdFailure()
     // Halt system.
     while (1)
     {
-        UpdateConnectionIndicator(sdCardFailure);
+        indicatorStatus = sdCardFailure;
+        UpdateConnectionIndicator();
     }
 }
 
@@ -439,11 +469,16 @@ bool GetUpdatedSpot()
 
     float price;
 
+    uint32_t free = system_get_free_heap_size();
+    Serial.print("\nFree RAM: ");
+    Serial.println(free);
+
+    /*
     String host = "http://worldclockapi.com/api/json/est/now";
 
     Serial.print("Connecting to ");
     Serial.println(host);
-    /*
+    
     HTTPClient http;
     http.begin(host);
     int httpCode = http.GET();
@@ -495,9 +530,22 @@ void IncrementMetalSelection()
     }
 }
 
+void UpdateDisplay()
+{
+    int numbers[5];
+    int dot;
+    uint32_t color = (metalSpot[selectedMetal].close > metalSpot[selectedMetal].open) ? GREEN : RED;
+
+    GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
+    SetSegments(numbers, color);
+    SetDots(dot, color);
+    SetIndicators(BLUE);
+    UpdateStrips();
+}
+
 void setup()
 {
-    Serial.begin(74880);
+    Serial.begin(74880); // BAUD is default ESP8266 debug BAUD.
     Serial.println("Spot Clock 2 starting up...");
 
     strip1.setBrightness(stripMaxBrightness);
@@ -510,40 +558,48 @@ void setup()
 
     buttonSelect.begin();
 
+    /*
     if (!InitSDCard())
     {
         sdFailure();
     }
 
     GetParametersFromSDCard();
+    */
+
+    // TEMP
+    ssid = "RedSky";
+    password = "happyredcat";
+    brightness = 127;
+    cycleDelay = 3000;
 
     Serial.print("SSID: ");
     Serial.println(ssid);
     Serial.print("Password: ");
     Serial.println(password);
-
-    // Set strip brightness from SD card parameter.
-    int b = brightness.toInt();
-    if (b >= 50 && b <= 255)
-    {
-        strip1.setBrightness(b);
-        strip2.setBrightness(b);
-        strip3.setBrightness(b);
-    }
     Serial.print("Brightness: ");
-    Serial.println(b);
-
+    Serial.println(brightness);
     Serial.print("CycleDelay: ");
     Serial.println(cycleDelay);
 
-    WiFi.begin(ssid, password);
+    // Set strip brightness from SD card parameter.   
+    if (brightness >= 50 && brightness <= 255)
+    {
+        strip1.setBrightness(brightness);
+        strip2.setBrightness(brightness);
+        strip3.setBrightness(brightness);
+    }
+
+    
 
     Serial.print("Connecting to WiFi...");
+    WiFi.begin(ssid, password);    
 
     msTimer timer(250);
     while (WiFi.status() != WL_CONNECTED)
     {
-        UpdateConnectionIndicator(wifiConnecting);
+        indicatorStatus = wifiConnecting;
+        UpdateConnectionIndicator();
         Serial.print(".");
         delay(250);
     }
@@ -556,63 +612,53 @@ void setup()
 
 void loop()
 {
-
-    static msTimer timerYield(25);
-    if (timerYield.elapsed())
-    {
-        // ESP8266 watchdog timer reset work around.
-        ESP.wdtFeed();
-        yield();
-    }
-
-    UpdateConnectionIndicator(indicatorStatus);
-
+    // Check for WiFi status change.
     static wl_status_t previousWifiStatus = WL_NO_SHIELD;
     if (previousWifiStatus != WiFi.status())
     {
         previousWifiStatus = WiFi.status();
         if (WiFi.status() == WL_CONNECTED)
         {
-            indicatorStatus = wifiConnected;
+            indicatorStatus = wifiConnected;       
         }
         else if (WiFi.status() != WL_CONNECTED)
         {
-            indicatorStatus = wifiDisconnected;
+            indicatorStatus = wifiDisconnected;          
         }
     }
 
+    // Update spot values on timer.
     static msTimer timerFetch(0);
     if (timerFetch.elapsed())
     {
-        timerFetch.setDelay(20000);
+        timerFetch.setDelay(5000);
 
         indicatorStatus = fetchingData;
-        UpdateConnectionIndicator(indicatorStatus);
+        UpdateConnectionIndicator();
 
         bool success = GetUpdatedSpot();
-        indicatorStatus = success ? fetchSuccess : fetchFailed;
+        indicatorStatus = success ? wifiConnected : fetchFailed;    
+       
+        UpdateDisplay();
     }
 
+    // Automatically change metal selection on elasped timer.
     static msTimer timerMetalSelection(cycleDelay);
     if (timerMetalSelection.elapsed())
     {
         IncrementMetalSelection();
+        UpdateDisplay();
     }
 
+    // Change metal selection on pressed select button.
     buttonSelect.read();
     if (buttonSelect.wasPressed())
     {
         timerMetalSelection.resetDelay();
         IncrementMetalSelection();
+        UpdateDisplay();
     }
 
-    int numbers[5];
-    int dot;
-    uint32_t color = (metalSpot[selectedMetal].close > metalSpot[selectedMetal].open) ? GREEN : RED;
-
-    GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
-    SetSegments(numbers, color);
-    SetDots(dot, color);
-    SetIndicators(BLUE);
-    UpdateStrips();
+    // Update status indicator.
+    UpdateConnectionIndicator();
 }

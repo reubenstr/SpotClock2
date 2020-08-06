@@ -1,17 +1,18 @@
 {
-  "timestamp": 1596649170,
-  "metal": "XAU",
-  "currency": "USD",
-  "exchange": "FOREXCOM",
-  "symbol": "FOREXCOM:XAUUSD",
-  "prev_close_price": 2019.2,
-  "open_price": 2019.2,
-  "low_price": 2009.66,
-  "high_price": 2055.82,
-  "open_time": 1596574800,
-  "price": 2036.51,
-  "ch": 17.31,
-  "chp": 0.85,
-  "ask": 2036.97,
-  "bid": 2036.05
+	"params": {
+		"provider": null,
+		"max_loaded_items": 5000,
+		"start_period": "2017-08-06 12:25:39",
+		"expression": "datetime,close",
+		"timeframe": "hour",
+		"end_period": "2020-08-06 12:25:39",
+		"item_count": 1
+	},
+	"results": {
+		"XAU_USD": {
+			"data": [
+				["2020-08-06 12:00:00", "2064.195000"]
+			]
+		}
+	}
 }

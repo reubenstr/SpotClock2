@@ -2,7 +2,7 @@
 *   Spot Clock 2
 *
 *   Fetches then displays current gold, silver, and platium prices via 
-*   WS2812b 7-segment displays.
+*   custom WS2812b 7-segment displays.
 *
 *   Reuben Strangelove
 *   Summer 2020
@@ -10,7 +10,7 @@
 *   MCU: ESP8266 
 *   MCU Hardware: hw-628 NODEMCU V3
 *
-*   
+*   WiFi credentials and other parameters stored on SD card.
 *   
 *   Notes:
 *   NeoPixel strips connect across multiple pins in order to reduce strip length.
@@ -178,11 +178,16 @@ bool GetParametersFromSDCard()
         ssid = doc["ssid"].as<String>();
         password = doc["password"].as<String>();
         timeZone = doc["time zone"].as<String>();
-        brightness = doc["brightness"].as<int>();;
-        cycleDelay = doc["cycle delay"].as<int>();;
-        metalSpot[0].percentage = doc["au alert percentage"].as<float>();;
-        metalSpot[1].percentage = doc["ag alert percentage"].as<float>();;
-        metalSpot[2].percentage = doc["pt alert percentage"].as<float>();;
+        brightness = doc["brightness"].as<int>();
+        ;
+        cycleDelay = doc["cycle delay"].as<int>();
+        ;
+        metalSpot[0].percentage = doc["au alert percentage"].as<float>();
+        ;
+        metalSpot[1].percentage = doc["ag alert percentage"].as<float>();
+        ;
+        metalSpot[2].percentage = doc["pt alert percentage"].as<float>();
+        ;
     }
     file.close();
     return true;
@@ -402,6 +407,7 @@ void sdFailure()
     {
         indicatorStatus = sdCardFailure;
         UpdateConnectionIndicator();
+        yield();
     }
 }
 
@@ -548,7 +554,17 @@ void UpdateDisplay()
 {
     int numbers[5];
     int dot;
-    uint32_t color = (metalSpot[selectedMetal].close > metalSpot[selectedMetal].open) ? GREEN : RED;
+    uint32_t color = BLUE;
+
+    if (metalSpot[selectedMetal].close + (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) > metalSpot[selectedMetal].open)
+    {
+        color = GREEN;
+    }
+
+    if (metalSpot[selectedMetal].close - (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) < metalSpot[selectedMetal].open)
+    {
+        color = RED;
+    }
 
     GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
     SetSegments(numbers, color);
@@ -578,7 +594,7 @@ void setup()
     GetParametersFromSDCard();
 
     /*
-   // Development parameters.
+   // Development parameters when bypassing SD card.
     ssid = "RedSky";
     password = "happyredcat";
     timeZone = "EST";

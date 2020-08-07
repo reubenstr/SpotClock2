@@ -1,0 +1,10 @@
+{
+	"ssid": "RedSky",
+	"password": "happyredcat",
+	"time zone": "EST",
+	"brightness": "127",
+	"cycle delay": "4000",
+	"ag alert percentage": "1",
+	"ag alert percentage": "2",
+	"pt alert percentage": "1"
+}

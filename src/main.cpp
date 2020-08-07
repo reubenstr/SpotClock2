@@ -13,9 +13,9 @@
 *   
 *   
 *   Notes:
-*   Neopixel strips have spread across multiple pins in order to reduce strip length.
-*   Long strips caused flickering.
-*   Neopixels are only updated when necessary as constant updates causes the
+*   NeoPixel strips connect across multiple pins in order to reduce strip length.
+*   Long strips cause flickering.
+*   NeoPixel are only updated when necessary as constant updates likey causes the
 *   watchdog timer to trigger.
 *
 */
@@ -36,8 +36,8 @@
 #define PIN_STRIP_3 0       // GPIO PIN NUMBER
 #define PIN_BUTTON_SELECT 2 // GPIO PIN NUMBER
 
-const int stripMaxBrightness = 50;
 const int stripStatusIndicatorIndex = 4;
+
 // Due to hardware limitations of the ESP8266 long WS2812b strips are not possible.
 // Therefore segments, indicators, and dots are combined in a awkward combination to prevent flickering.
 Adafruit_NeoPixel strip1 = Adafruit_NeoPixel(42, PIN_STRIP_1, NEO_GRB + NEO_KHZ800);
@@ -47,8 +47,10 @@ Adafruit_NeoPixel strip3 = Adafruit_NeoPixel(34, PIN_STRIP_3, NEO_GRB + NEO_KHZ8
 Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 
 // SD card parameters.
-String ssid, password;
+String ssid, password, timeZone;
 int brightness, cycleDelay;
+
+int curTimeHour, curTimeMinute;
 
 const char *wifiFilePath = "/wifi.txt";
 const int chipSelect = D8;
@@ -58,6 +60,7 @@ struct MetalSpot
 {
     float open;
     float close;
+    float percentage;
 } metalSpot[3];
 
 enum IndicatorStatus
@@ -79,33 +82,23 @@ const uint32_t GREEN = 0x0000FF00;
 const uint32_t BLUE = 0x000000FF;
 const uint32_t YELLOW = 0x00F0F000;
 
+// Convert decimal value to segments (hardware does not follow 7-segment display convention).
+const int decimalToSegmentValues[11][7] = {{1, 1, 1, 1, 1, 1, 0},  // 0
+                                           {0, 0, 0, 1, 1, 0, 0},  // 1
+                                           {1, 0, 1, 1, 0, 1, 1},  // 2
+                                           {0, 0, 1, 1, 1, 1, 1},  // 3
+                                           {0, 1, 0, 1, 1, 0, 1},  // 4
+                                           {0, 1, 1, 0, 1, 1, 1},  // 5
+                                           {1, 1, 0, 0, 1, 1, 1},  // 6
+                                           {0, 0, 1, 1, 1, 0, 0},  // 7
+                                           {1, 1, 1, 1, 1, 1, 1},  // 8
+                                           {0, 1, 1, 1, 1, 0, 1},  // 9
+                                           {0, 0, 0, 0, 0, 0, 0}}; // 10 / ALL OFF
+
 // Pack color data into 32 bit unsigned int (copied from Neopixel library).
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
 {
     return (uint32_t)((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-}
-
-// Fade color by specified amount.
-uint32_t Fade(uint32_t color, int amt)
-{
-    signed int r, g, b;
-
-    r = (color & 0x00FF0000) >> 16;
-    g = (color & 0x0000FF00) >> 8;
-    b = color & 0x000000FF;
-
-    r -= amt;
-    g -= amt;
-    b -= amt;
-
-    if (r < 0)
-        r = 0;
-    if (g < 0)
-        g = 0;
-    if (b < 0)
-        b = 0;
-
-    return Color(r, g, b);
 }
 
 // Input a value 0 to 255 to get a color value (of a pseudo-rainbow).
@@ -138,19 +131,6 @@ uint32_t SwapRG(uint32_t color)
     return Color(g, r, b);
 }
 
-// Convert decimal value to segments (hardware does not follow 7-segment display convention).
-const int decimalToSegmentValues[11][7] = {{1, 1, 1, 1, 1, 1, 0},  // 0
-                                           {0, 0, 0, 1, 1, 0, 0},  // 1
-                                           {1, 0, 1, 1, 0, 1, 1},  // 2
-                                           {0, 0, 1, 1, 1, 1, 1},  // 3
-                                           {0, 1, 0, 1, 1, 0, 1},  // 4
-                                           {0, 1, 1, 0, 1, 1, 1},  // 5
-                                           {1, 1, 0, 0, 1, 1, 1},  // 6
-                                           {0, 0, 1, 1, 1, 0, 0},  // 7
-                                           {1, 1, 1, 1, 1, 1, 1},  // 8
-                                           {0, 1, 1, 1, 1, 0, 1},  // 9
-                                           {0, 0, 0, 0, 0, 0, 0}}; // 10 / ALL OFF
-
 bool InitSDCard()
 {
     int count = 0;
@@ -171,7 +151,7 @@ bool InitSDCard()
     return true;
 }
 
-void GetParametersFromSDCard()
+bool GetParametersFromSDCard()
 {
     File file = SD.open(wifiFilePath);
 
@@ -180,31 +160,32 @@ void GetParametersFromSDCard()
     if (!file)
     {
         Serial.printf("Failed to open file: %s\n", wifiFilePath);
-        Serial.printf("Creating file with path: %s\n", wifiFilePath);
-        File file = SD.open(wifiFilePath, FILE_WRITE);
-        file.print("SSID: \"your SSID inside quotations\"\nPassword: \"your password inside quotations\"");
         file.close();
+        return false;
     }
-
-    if (file.find("SSID: \""))
+    else
     {
-        ssid = file.readStringUntil('"');
-    }
+        DynamicJsonDocument doc(2048);
+        DeserializationError error = deserializeJson(doc, file.readString());
 
-    if (file.find("Password: \""))
-    {
-        password = file.readStringUntil('"');
-    }
+        if (error)
+        {
+            Serial.print(F("DeserializeJson() failed: "));
+            Serial.println(error.c_str());
+            return false;
+        }
 
-    if (file.find("Brightness: \""))
-    {
-        brightness = file.readStringUntil('"').toInt();
+        ssid = doc["ssid"].as<String>();
+        password = doc["password"].as<String>();
+        timeZone = doc["time zone"].as<String>();
+        brightness = doc["brightness"].as<int>();;
+        cycleDelay = doc["cycle delay"].as<int>();;
+        metalSpot[0].percentage = doc["au alert percentage"].as<float>();;
+        metalSpot[1].percentage = doc["ag alert percentage"].as<float>();;
+        metalSpot[2].percentage = doc["pt alert percentage"].as<float>();;
     }
-
-    if (file.find("Cycle delay: \""))
-    {
-        cycleDelay = file.readStringUntil('"').toInt();
-    }
+    file.close();
+    return true;
 }
 
 void GenerateNumbers(float value, int *numbers, int *dot)
@@ -284,6 +265,16 @@ void SetDots(int dot, uint32_t color)
 
 void SetSegments(int numbers[5], uint32_t color)
 {
+    // Brightness fix (since segments share strips of dots and indicators).
+    if (color == RED)
+    {
+        color = Color(brightness, 0, 0);
+    }
+    else if (color == GREEN)
+    {
+        color = Color(0, brightness, 0);
+    }
+
     for (int i = 0; i < 21; i++)
     {
         // Segment 1.
@@ -308,13 +299,14 @@ void SetIndicators(uint32_t color)
     // Set Spot Clock text indicator;
     static msTimer timer(25);
     static byte wheelPos;
+
     if (timer.elapsed())
     {
         wheelPos++;
     }
+
     for (int i = 0; i < 7; i++)
     {
-        //strip3.setPixelColor(i, Wheel((255 / 7) * i) + wheelPos);
         strip3.setPixelColor(i, Wheel(wheelPos + i * 10));
     }
 
@@ -413,6 +405,56 @@ void sdFailure()
     }
 }
 
+bool UpdateTime()
+{
+    String payload;
+    String host = "http://worldclockapi.com/api/json/" + timeZone + "/now";
+
+    Serial.print("Connecting to ");
+    Serial.println(host);
+
+    HTTPClient http;
+    http.begin(host);
+    int httpCode = http.GET();
+
+    if (httpCode > 0)
+    {
+        Serial.print("HTTP code: ");
+        Serial.println(httpCode);
+        Serial.println("[RESPONSE]");
+        payload = http.getString();
+        Serial.println(payload);
+        http.end();
+    }
+    else
+    {
+        Serial.print("Connection failed, HTTP client code: ");
+        Serial.println(httpCode);
+        http.end();
+        return false;
+    }
+
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (error)
+    {
+        Serial.print(F("DeserializeJson() failed: "));
+        Serial.println(error.c_str());
+        return false;
+    }
+
+    String dateTime = doc["currentDateTime"];
+
+    //Expected time string: "2020-08-07T10:08-04:00"
+    curTimeHour = dateTime.substring(11, 13).toInt();
+    curTimeMinute = dateTime.substring(14, 16).toInt();
+
+    Serial.printf("Current time: %u:%u", curTimeHour, curTimeMinute);
+
+    return true;
+}
+
 bool FetchDataFromInternet(float *price, String expression, String instrument)
 {
     String payload;
@@ -473,34 +515,6 @@ bool GetUpdatedSpot()
     Serial.print("\nFree RAM: ");
     Serial.println(free);
 
-    /*
-    String host = "http://worldclockapi.com/api/json/est/now";
-
-    Serial.print("Connecting to ");
-    Serial.println(host);
-    
-    HTTPClient http;
-    http.begin(host);
-    int httpCode = http.GET();
-
-    if (httpCode > 0)
-    {
-        Serial.print("HTTP code: ");
-        Serial.println(httpCode);
-        Serial.println("[RESPONSE]");
-        String p = http.getString();
-        Serial.println(p);
-        http.end();
-    }
-    else
-    {
-        Serial.print("Connection failed, HTTP client code: ");
-        Serial.println(httpCode);
-        http.end();
-        return false;
-    }
-    */
-
     if (!FetchDataFromInternet(&price, "open", metals[metalIndex]))
     {
         return false;
@@ -546,11 +560,9 @@ void UpdateDisplay()
 void setup()
 {
     Serial.begin(74880); // BAUD is default ESP8266 debug BAUD.
+
     Serial.println("Spot Clock 2 starting up...");
 
-    strip1.setBrightness(stripMaxBrightness);
-    strip2.setBrightness(stripMaxBrightness);
-    strip3.setBrightness(stripMaxBrightness);
     strip1.begin();
     strip2.begin();
     strip3.begin();
@@ -558,42 +570,33 @@ void setup()
 
     buttonSelect.begin();
 
-    /*
     if (!InitSDCard())
     {
         sdFailure();
     }
 
     GetParametersFromSDCard();
-    */
 
-    // TEMP
+    /*
+   // Development parameters.
     ssid = "RedSky";
     password = "happyredcat";
-    brightness = 127;
+    timeZone = "EST";
+    brightness = 100;
     cycleDelay = 3000;
+    */
 
     Serial.print("SSID: ");
     Serial.println(ssid);
     Serial.print("Password: ");
     Serial.println(password);
-    Serial.print("Brightness: ");
-    Serial.println(brightness);
-    Serial.print("CycleDelay: ");
-    Serial.println(cycleDelay);
-
-    // Set strip brightness from SD card parameter.   
-    if (brightness >= 50 && brightness <= 255)
-    {
-        strip1.setBrightness(brightness);
-        strip2.setBrightness(brightness);
-        strip3.setBrightness(brightness);
-    }
-
-    
+    Serial.print("Time zone: ");
+    Serial.println(timeZone);
+    Serial.printf("Brightness: %u\n", brightness);
+    Serial.printf("CycleDelay: %u\n", cycleDelay);
 
     Serial.print("Connecting to WiFi...");
-    WiFi.begin(ssid, password);    
+    WiFi.begin(ssid, password);
 
     msTimer timer(250);
     while (WiFi.status() != WL_CONNECTED)
@@ -619,11 +622,11 @@ void loop()
         previousWifiStatus = WiFi.status();
         if (WiFi.status() == WL_CONNECTED)
         {
-            indicatorStatus = wifiConnected;       
+            indicatorStatus = wifiConnected;
         }
         else if (WiFi.status() != WL_CONNECTED)
         {
-            indicatorStatus = wifiDisconnected;          
+            indicatorStatus = wifiDisconnected;
         }
     }
 
@@ -631,23 +634,32 @@ void loop()
     static msTimer timerFetch(0);
     if (timerFetch.elapsed())
     {
-        timerFetch.setDelay(5000);
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            timerFetch.setDelay(60000);
 
-        indicatorStatus = fetchingData;
-        UpdateConnectionIndicator();
+            indicatorStatus = fetchingData;
+            UpdateConnectionIndicator();
 
-        bool success = GetUpdatedSpot();
-        indicatorStatus = success ? wifiConnected : fetchFailed;    
-       
-        UpdateDisplay();
+            bool success = false;
+            success = UpdateTime();
+            success = success | GetUpdatedSpot();
+            indicatorStatus = success ? wifiConnected : fetchFailed;
+
+            UpdateDisplay();
+        }
     }
 
     // Automatically change metal selection on elasped timer.
     static msTimer timerMetalSelection(cycleDelay);
+    static bool holdFlag = false;
     if (timerMetalSelection.elapsed())
     {
-        IncrementMetalSelection();
-        UpdateDisplay();
+        if (!holdFlag)
+        {
+            IncrementMetalSelection();
+            UpdateDisplay();
+        }
     }
 
     // Change metal selection on pressed select button.
@@ -657,6 +669,11 @@ void loop()
         timerMetalSelection.resetDelay();
         IncrementMetalSelection();
         UpdateDisplay();
+    }
+    if (buttonSelect.pressedFor(1000))
+    {
+        // TODO: indicate to the user that a hold is placed/removed.
+        holdFlag = !holdFlag;
     }
 
     // Update status indicator.

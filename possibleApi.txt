@@ -1,0 +1,7 @@
+
+
+http://apidocs.fxhistoricaldata.com/
+http://api.fxhistoricaldata.com/indicators?timeframe=day&item_count=1&expression=open&instruments=XAU_USD
+
+
+https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD

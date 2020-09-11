@@ -50,11 +50,10 @@ Button buttonSelect(PIN_BUTTON_SELECT, 25, false, true);
 String ssid, password, timeZone;
 int brightness, cycleDelay;
 
-int curTimeHour, curTimeMinute;
-
 const char *wifiFilePath = "/wifi.txt";
 const int chipSelect = D8;
 const int blankSegment = 10;
+const int dashSegment = 11;
 
 struct MetalSpot
 {
@@ -74,6 +73,15 @@ enum IndicatorStatus
     fetchSuccess
 } indicatorStatus;
 
+struct TimeDate
+{
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+} curTimeDate;
+
 int selectedMetal; // 0 = Au, 1 = Ag, 2 = Pt
 
 const uint32_t OFF = 0x0000000;
@@ -81,9 +89,16 @@ const uint32_t RED = 0x00FF0000;
 const uint32_t GREEN = 0x0000FF00;
 const uint32_t BLUE = 0x000000FF;
 const uint32_t YELLOW = 0x00F0F000;
+const uint32_t MAGENTA = 0x00F000F0;
+
+const uint32_t RED_DIM = 0x00300000;
+const uint32_t GREEN_DIM = 0x00003000;
+const uint32_t BLUE_DIM = 0x00000030;
+const uint32_t YELLOW_DIM = 0x002F2F00;
+const uint32_t MAGENTA_DIM = 0x002F002F;
 
 // Convert decimal value to segments (hardware does not follow 7-segment display convention).
-const int decimalToSegmentValues[11][7] = {{1, 1, 1, 1, 1, 1, 0},  // 0
+const int decimalToSegmentValues[12][7] = {{1, 1, 1, 1, 1, 1, 0},  // 0
                                            {0, 0, 0, 1, 1, 0, 0},  // 1
                                            {1, 0, 1, 1, 0, 1, 1},  // 2
                                            {0, 0, 1, 1, 1, 1, 1},  // 3
@@ -93,7 +108,19 @@ const int decimalToSegmentValues[11][7] = {{1, 1, 1, 1, 1, 1, 0},  // 0
                                            {0, 0, 1, 1, 1, 0, 0},  // 7
                                            {1, 1, 1, 1, 1, 1, 1},  // 8
                                            {0, 1, 1, 1, 1, 0, 1},  // 9
-                                           {0, 0, 0, 0, 0, 0, 0}}; // 10 / ALL OFF
+                                           {0, 0, 0, 0, 0, 0, 0},  // 10 / ALL OFF
+                                           {0, 0, 0, 0, 0, 0, 1}}; // 11 / Center dash
+
+// https://www.geeksforgeeks.org/find-day-of-the-week-for-a-given-date/
+int dayofweek(int d, int m, int y)
+{
+    static int t[] = {0, 3, 2, 5, 0, 3,
+                      5, 1, 4, 6, 2, 4};
+    y -= m < 3;
+    return (y + y / 4 - y / 100 +
+            y / 400 + t[m - 1] + d) %
+           7;
+}
 
 // Pack color data into 32 bit unsigned int (copied from Neopixel library).
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
@@ -179,15 +206,11 @@ bool GetParametersFromSDCard()
         password = doc["password"].as<String>();
         timeZone = doc["time zone"].as<String>();
         brightness = doc["brightness"].as<int>();
-        ;
         cycleDelay = doc["cycle delay"].as<int>();
-        ;
+
         metalSpot[0].percentage = doc["au alert percentage"].as<float>();
-        ;
         metalSpot[1].percentage = doc["ag alert percentage"].as<float>();
-        ;
         metalSpot[2].percentage = doc["pt alert percentage"].as<float>();
-        ;
     }
     file.close();
     return true;
@@ -208,7 +231,16 @@ void GenerateNumbers(float value, int *numbers, int *dot)
     int fOnes = fPart % 10;
     int fTens = (fPart / 10) % 10;
 
-    if (iPart == 0)
+    if (value == 0)
+    {
+        numbers[4] = dashSegment;
+        numbers[3] = dashSegment;
+        numbers[2] = dashSegment;
+        numbers[1] = dashSegment;
+        numbers[0] = dashSegment;
+        *dot = blankSegment;
+    }
+    else if (iPart == 0)
     {
         numbers[4] = blankSegment;
         numbers[3] = blankSegment;
@@ -453,10 +485,15 @@ bool UpdateTime()
     String dateTime = doc["currentDateTime"];
 
     //Expected time string: "2020-08-07T10:08-04:00"
-    curTimeHour = dateTime.substring(11, 13).toInt();
-    curTimeMinute = dateTime.substring(14, 16).toInt();
+    curTimeDate.hour = dateTime.substring(11, 13).toInt();
+    curTimeDate.minute = dateTime.substring(14, 16).toInt();
 
-    Serial.printf("Current time: %u:%u", curTimeHour, curTimeMinute);
+    curTimeDate.year = dateTime.substring(0, 4).toInt();
+    curTimeDate.month = dateTime.substring(5, 7).toInt();
+    curTimeDate.day = dateTime.substring(8, 10).toInt();
+
+    Serial.printf("Current date: %u:%u:%u", curTimeDate.year, curTimeDate.month, curTimeDate.day);
+    Serial.printf("Current time: %u:%u", curTimeDate.hour, curTimeDate.minute);
 
     return true;
 }
@@ -517,9 +554,9 @@ bool GetUpdatedSpot()
 
     float price;
 
-    uint32_t free = system_get_free_heap_size();
-    Serial.print("\nFree RAM: ");
-    Serial.println(free);
+    // uint32_t free = system_get_free_heap_size();
+    // Serial.print("\nFree RAM: ");
+    // Serial.println(free);
 
     if (!FetchDataFromInternet(&price, "open", metals[metalIndex]))
     {
@@ -556,19 +593,31 @@ void UpdateDisplay()
     int dot;
     uint32_t color = BLUE;
 
-    if (metalSpot[selectedMetal].close + (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) > metalSpot[selectedMetal].open)
+    int dayOfTheWeek = dayofweek(curTimeDate.day, curTimeDate.month, curTimeDate.year);
+
+    if (dayOfTheWeek == 0 || dayOfTheWeek == 6) // Sunday or Saturday
     {
-        color = GREEN;
+        color = MAGENTA;
+    }
+    else
+    {
+        if (metalSpot[selectedMetal].close + (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) > metalSpot[selectedMetal].open)
+        {
+            color = GREEN;
+        }
+
+        if (metalSpot[selectedMetal].close - (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) < metalSpot[selectedMetal].open)
+        {
+            color = RED;
+        }
     }
 
-    if (metalSpot[selectedMetal].close - (metalSpot[selectedMetal].close * metalSpot[selectedMetal].percentage) < metalSpot[selectedMetal].open)
-    {
-        color = RED;
-    }
+    // Dots need dimmed due to physical  characteristics of physical LED housings.
+    uint32_t dotColor = color == RED ? RED_DIM : color == GREEN ? GREEN_DIM : color == MAGENTA ? MAGENTA_DIM : OFF;
 
     GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
     SetSegments(numbers, color);
-    SetDots(dot, color);
+    SetDots(dot, dotColor);
     SetIndicators(BLUE);
     UpdateStrips();
 }

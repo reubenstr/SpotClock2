@@ -1,23 +1,30 @@
 /*
-*   Spot Clock 2
-*
-*   Fetches then displays current gold, silver, and platium prices via 
-*   custom WS2812b 7-segment displays.
-*
-*   Reuben Strangelove
-*   Summer 2020
-*
-*   MCU: ESP8266 
-*   MCU Hardware: hw-628 NODEMCU V3
-*
-*   WiFi credentials and other parameters stored on SD card.
-*   
-*   Notes:
-*   NeoPixel strips connect across multiple pins in order to reduce strip length.
-*   Long strips cause flickering.
-*   NeoPixel are only updated when necessary as constant updates likey causes the
-*   watchdog timer to trigger.
-*
+	Spot Clock 2
+	Reuben Strangelove
+	Summer 2020
+
+	Fetches then displays current gold, silver, and platium prices via 
+	custom WS2812b 7-segment displays.	
+
+	MCU:
+		ESP8266 (hw-628 NODEMCU V3)	
+	
+	Notes:
+		WiFi credentials and other parameters stored on SD card.
+	
+		NeoPixel strips connect across multiple pins in order to reduce strip length.
+		Long strips cause flickering.
+	
+	Known Issues:
+		NeoPixel are only updated when necessary as constant updates likey causes the
+		watchdog timer to trigger.
+		
+	Caution:
+		Not recommend for new designs.
+		Many improvements have been implemented on the updated ESP32 project which provides
+		better SD parameter handling, Wi-Fi reconnections and multiple credentials, local time processing, 
+		market hours logic, RTOS task for blocking methods, error messages, etc.		
+		https://github.com/reubenstr/QuoteBot
 */
 
 #include <Arduino.h>
@@ -492,22 +499,25 @@ bool UpdateTime()
     curTimeDate.month = dateTime.substring(5, 7).toInt();
     curTimeDate.day = dateTime.substring(8, 10).toInt();
 
-    Serial.printf("Current date: %u:%u:%u", curTimeDate.year, curTimeDate.month, curTimeDate.day);
-    Serial.printf("Current time: %u:%u", curTimeDate.hour, curTimeDate.minute);
+    Serial.printf("Current date: %u:%u:%u\n", curTimeDate.year, curTimeDate.month, curTimeDate.day);
+    Serial.printf("Current time: %u:%u\n", curTimeDate.hour, curTimeDate.minute);
 
     return true;
 }
 
 bool FetchDataFromInternet(float *price, String expression, String instrument)
-{
+{  
+    const String metals[] = {"XAU", "XAG", "XPT"};
+
     String payload;
-    String host = "http://api.fxhistoricaldata.com/indicators?timeframe=day&item_count=1&expression=" + expression + "&instruments=" + instrument;
+    String host = "https://www.goldapi.io/api/" + instrument + "/USD";
 
     Serial.print("Connecting to ");
     Serial.println(host);
 
     HTTPClient http;
     http.begin(host);
+    http.addHeader("x-access-token", "goldapi-dbg9uykdhnka38-io");
     int httpCode = http.GET();
 
     if (httpCode > 0)
@@ -537,7 +547,7 @@ bool FetchDataFromInternet(float *price, String expression, String instrument)
         return false;
     }
 
-    *price = doc["results"][instrument]["data"][0][1];
+    *price = doc["results"][instrument]["data"][0][1];   
 
     return true;
 }
@@ -613,7 +623,9 @@ void UpdateDisplay()
     }
 
     // Dots need dimmed due to physical  characteristics of physical LED housings.
-    uint32_t dotColor = color == RED ? RED_DIM : color == GREEN ? GREEN_DIM : color == MAGENTA ? MAGENTA_DIM : OFF;
+    uint32_t dotColor = color == RED ? RED_DIM : color == GREEN ? GREEN_DIM
+                                             : color == MAGENTA ? MAGENTA_DIM
+                                                                : OFF;
 
     GenerateNumbers(metalSpot[selectedMetal].close, numbers, &dot);
     SetSegments(numbers, color);
@@ -675,7 +687,8 @@ void setup()
     Serial.println();
     Serial.println("Connected.");
     Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println(WiFi.localIP());  
+    Serial.println(WiFi.localIP());  
 }
 
 void loop()
